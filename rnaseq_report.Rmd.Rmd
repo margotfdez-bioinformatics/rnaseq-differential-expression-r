@@ -1,0 +1,717 @@
+---
+title: "Analysis Results of GSE294583"
+author: "Margot Fernández Cuadros"
+date: "2026-11-18"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Analysis Results of GSE294583
+
+First of all, we clear the workspace and load the required libraries.
+
+```{r}
+rm(list =ls())
+library(ggplot2)
+library(reshape2)
+library(pheatmap)
+```
+
+# ===============================================
+# STEP 1: READ THE FILES
+# ===============================================
+
+In this section, the raw count matrix and sample metadata are loaded into R.
+
+```{r}
+#Define input and output file paths
+counts_file<-"data/counts.tsv"
+metadata_file<-"data/metadata.tsv"
+output_dir<-"results/"
+```
+
+If there is an error, the program will display it.
+
+```{r}
+#check errors
+if (!file.exists(counts_file)){
+  stop("The counts file does not exist")
+}
+
+if (!file.exists(metadata_file)){
+  stop("The metadata file does not exist")
+}
+```
+
+Read the files:
+
+```{r}
+cat(" Leyendo archivo:", counts_file, "\n")
+cat(" Leyendo archivo:", metadata_file, "\n")
+cat(" Leyendo archivo:", output_dir, "\n")
+
+#Read the files
+counts <- read.delim(counts_file,header = TRUE)
+metadata<-read.delim(metadata_file,header=TRUE)
+
+cat("\n Files uploaded successfully\n")
+```
+
+And display important information to the user:
+
+```{r}
+cat("Number of genes:", nrow(counts), "\n")
+cat("Number of columns:", ncol(counts), "\n")
+cat("Groups found in metadata:",unique(metadata$group),"\n")
+```
+
+
+# ===============================================
+# STEP 2: PREPARE THE EXPRESSION MATRIX
+# ===============================================
+
+The next step is to prepare the expression matrix, with the goal of retaining only the data we need.
+To do this, it is necessary to create a matrix containing gene names and their expression data, organized by sample and/or replicate (count_matrix).
+
+```{r}
+#assign a name to each row
+rownames(counts)<-counts$GeneID
+
+#Retaining the necessary data
+count_matrix<-counts[,-1]
+```
+
+And we apply a log2(count_matrix + 1) transformation so that the expression data would be easier to visualize and compare in the future plots (log_matrix).
+
+```{r}
+#logarithmic transformation
+log_matrix<-log2(count_matrix+1)
+```
+
+# ===============================================
+# STEP 3: DIFFERENTIAL EXPRESSION OF EACH GENE
+# ===============================================
+
+The next step is to perform a differential expression analysis for each gene. To do this, we will create a data frame containing the means for the control and treatment conditions, the log2 fold change, and the corresponding p-value.
+
+#T-TEST
+# -----------------------------------------------
+
+We do the t-test to obtain the p-value.
+
+```{r}
+treated<-count_matrix[,c("T1","T2","T3")]
+control<-count_matrix[,c("Con1","Con2","Con3")]
+```
+
+We iterate through our count matrix to perform the t-test and store the p-value in the empty vector.
+
+```{r}
+#We create an empty vector to store the p-values.
+p_values<-numeric(nrow(count_matrix))
+
+for (i in 1:nrow(count_matrix)){
+  x<-treated[i,]
+  y<-control[i,]
+  test_result<-tryCatch(t.test(x,y),error=function(e) NULL)
+    if (!is.null(test_result)){
+      p_values[i]<-test_result$p.value
+    } else {
+      p_values[i]<-NA
+    }
+}
+```
+
+#MEAN
+#------------------------------------------------
+
+Create an empty vector to store the means and iterate through our count matrix doing the means.
+
+```{r}
+meanTreated<-numeric(nrow(count_matrix))
+for(i in 1:nrow(treated)){
+  meanT<-mean(unlist(treated[i,]))
+  meanTreated[i]<-meanT
+}
+
+meanControl<-numeric(nrow(count_matrix))
+for(i in 1:nrow(control)){
+  meanC<-mean(unlist(control[i,]))
+  meanControl[i]<-meanC
+}
+```
+
+#LOG2 FOLD CHANGE
+#-----------------------------------------------
+
+We calculate the Log2FC using the means for the fold change.
+
+```{r}
+log2FC<-log2((meanTreated+1)/(meanControl+1))
+```
+
+#Results of differential expression of each gene
+#-------------------------------------------------
+
+Finally, we create a data frame with the calculated data.
+
+```{r}
+results_differential_expression<-data.frame(GeneID=counts$GeneID,MEAN_TREATED=meanTreated,MEAN_CONTROL=meanControl,Log2FC=log2FC,P_VALUE=p_values)
+```
+
+Additionally, we adjust the p-values using the Benjamini-Hochberg (BH) method to account for multiple comparisons. This is important because we are testing thousands of genes simultaneously, which increases the probability of obtaining false-positive results. This correction helps control the false discovery rate and makes our results more reliable.
+
+```{r}
+# Adjust p-values using the Benjamini-Hochberg method
+results_differential_expression$ADJUSTED_P_VALUE <-
+  p.adjust(results_differential_expression$P_VALUE, method = "BH")
+```
+
+
+And we save it:
+
+```{r}
+write.table(
+  results_differential_expression,
+  file = file.path(output_dir, "differential_expression.tsv"),
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+```
+
+# ===============================================
+# STEP 4: SIGNIFICANT GENES (P-VALUE <0.05)
+# ===============================================
+
+Next, we select and save the genes whose expression changes significantly (p-value < 0.05). NOTE: WE USE THE ORIGINAL P-VALUE BECAUSE THE NUMBER OF SIGNIFICANT GENES USING THE BENJAMINI-HOCHBERG IS 0.
+
+```{r}
+# Create the table of significant genes using the adjusted p-value
+significant_genes<-subset(results_differential_expression,P_VALUE<0.05)
+significant_genes_BH <- subset(results_differential_expression, ADJUSTED_P_VALUE < 0.05)
+
+cat("Number of significant genes (original p-value):", nrow(significant_genes), "\n")
+
+cat("Number of significant genes (adjusted p-value - BH):", nrow(significant_genes_BH), "\n")
+
+#Save significant genes
+write.table(
+  significant_genes,
+  file = file.path(output_dir, "significant_genes.tsv"),
+  sep = "\t",
+  quote = FALSE,
+  row.names = FALSE
+)
+```
+
+# ===============================================
+# STEP 5: BOXPLOT
+# ===============================================
+
+#Reorganise the matrix to use GGPLOT2
+#------------------------------------------------
+
+Before constructing the boxplot, it is necessary to transform our log_matrix into a long format, which in turn becomes a data frame (log_matrix_long).
+
+```{r}
+#Conversion to "long"
+log_matrix_df <- as.data.frame(log_matrix)
+log_matrix_df$GeneID <- rownames(log_matrix)
+
+log_matrix_long <- melt(
+  log_matrix_df,
+  id.vars = "GeneID",
+  variable.name = "Sample",
+  value.name = "Expression"
+)
+
+log_matrix_long$Condition <- ifelse(
+  log_matrix_long$Sample %in% c("T1", "T2", "T3"),
+  "Treated",
+  "Control"
+)
+```
+
+#Create the boxplot
+#----------------------------------------------
+
+And now, we can create the boxplot.The box plot shows the distribution of gene expression levels across the six samples. Samples are divided into two experimental groups: Treated and Control. It allows us to compare the overall distribution of gene expression between samples.
+
+```{r}
+ggplot(log_matrix_long,
+       aes(x = Sample, y = Expression, fill = Condition)) +
+  geom_boxplot(alpha = 0.7, outlier.shape = NA) +
+  scale_fill_manual(values = c(
+    "Treated" = "#D00000",
+    "Control" = "#00A83B"
+  )) +
+  labs(
+    title = "Gene Expression Distribution by Sample",
+    x = "Samples",
+    y = "log2(Counts+1)",
+    fill = "Condition:"
+  ) +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.5
+    ),
+    panel.grid.minor = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.3
+    ),
+    axis.line = element_line(color = "black", linewidth = 0.7),
+    axis.ticks = element_line(color = "black"),
+    axis.text = element_text(face = "bold", size = 10),
+    legend.title = element_text(face = "bold", size = 11),
+    legend.text = element_text(face = "bold", size = 10),
+    legend.position = "top",
+    plot.title = element_text(face = "bold", size = 16, hjust=0.5)
+  )
+#Save the boxplot
+ggsave(
+  filename = file.path(output_dir, "Boxplot.png"),
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+# ===============================================
+# STEP 6: SCATTER PLOT
+# ===============================================
+
+Now, we create the scatter plot using "results_differential_expression", which contains the means.
+The scatter plot compares the mean gene expression levels in the control and treated groups. Each point represents one gene. The plot helps to visualize the relationship between gene expression levels under both experimental conditions.
+
+```{r}
+#Create the scatter plot
+ggplot(results_differential_expression, aes(x = MEAN_CONTROL, y = MEAN_TREATED)) +
+  geom_point(alpha = 0.4, color = "#4040fb") +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  labs(title = "Linear relation between Control and Treated",
+       subtitle = sprintf("r = %.3f, p = %.2g",
+                          cor(results_differential_expression$MEAN_CONTROL, results_differential_expression$MEAN_TREATED),
+                          cor.test(results_differential_expression$MEAN_CONTROL, results_differential_expression$MEAN_TREATED)$p.value),
+       x = "CONTROL", y = "TREATED") +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.5
+    ),
+    panel.grid.minor = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.3
+    ),
+    axis.line = element_line(color = "black", linewidth = 0.7),
+    axis.ticks = element_line(color = "black"),
+    axis.text = element_text(face = "bold", size = 10),
+    plot.title = element_text(face = "bold", size = 16, hjust=0.5),
+    plot.subtitle = element_text(hjust = 0.5)
+  )
+```
+
+And we can save it:
+
+```{r}
+#Save the Scatter plot
+ggsave(
+  filename = file.path(output_dir, "Scatterplot.png"),
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+# ===============================================
+# STEP 7: HISTOGRAM
+# ===============================================
+
+Now, we can create an histogram, using de log_matrix_long.
+The histogram represents the overall distribution of gene expression values across all six samples. Expression levels are shown on a log2 scale to make the distribution easier to visualize. It helps us understand how frequently different expression levels occur in the dataset.
+
+```{r}
+ggplot(log_matrix_long, aes(x = Expression)) +
+  geom_histogram(bins = 30, fill = "#ff8000", color = "white") +
+  labs(title = "General distribution of gene expression",
+       x = "Expression (log2 counts + 1)",
+       y = "Number de observations") +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.5
+    ),
+    panel.grid.minor = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.3
+    ),
+    axis.line = element_line(color = "black", linewidth = 0.7),
+    axis.ticks = element_line(color = "black"),
+    axis.text = element_text(face = "bold", size = 10),
+    plot.title = element_text(face = "bold", size = 16, hjust=0.5)
+  )
+```
+And we can save it:
+
+```{r}
+ggsave(
+  filename = file.path(output_dir, "Histogram.png"),
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+# ===============================================
+# STEP 8: VIOLIN PLOT
+# ===============================================
+
+Now, we can create a violin plot using "long_matrix_long" again. The violin plot compares the distribution of gene expression values between the Treated and Control groups. It shows the shape of the distributions, helping us visualize how expression values are spread across both conditions
+
+```{r}
+ggplot(log_matrix_long, aes(x = Condition, y = Expression, fill = Condition)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +
+  scale_fill_manual(values = c(
+    "Treated" = "#D00000",
+    "Control" = "#00A83B"
+  )) +
+  labs(title = "Expression distribution",
+       y = "Expression (UA)") +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.5
+    ),
+    panel.grid.minor = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.3
+    ),
+    axis.line = element_line(color = "black", linewidth = 0.7),
+    axis.ticks = element_line(color = "black"),
+    axis.text = element_text(face = "bold", size = 10),
+    plot.title = element_text(face = "bold", size = 16, hjust=0.5)
+  )
+```
+
+And we can save it:
+
+```{r}
+ggsave(
+  filename = file.path(output_dir, "Violinplot.png"),
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+# ===============================================
+# STEP 9: DENSITY PLOT BY CONDITION
+# ===============================================
+
+We can create a density plot too. The density plot compares the distribution of gene expression values between the Treated and Control groups. It provides a smoothed representation of the data distribution, allowing us to visualize the differences and similarities in expression patterns between both conditions. The results are similar to those observed in the previous violin plot, as both graphs show comparable expression distributions between the two experimental groups.
+
+```{r}
+ggplot(log_matrix_long, aes(x = Expression, fill = Condition)) +
+  geom_density(alpha = 0.5, linewidth=0.8) +
+  scale_fill_manual(values = c(
+    "Treated" = "#D00000",
+    "Control" = "#00A83B"
+  )) +
+  labs(title = "Expression distribution by condition",
+       x = "Expression",
+       y = "Density") +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.5
+    ),
+    panel.grid.minor = element_line(
+      color = "gray50",
+      linetype = "dotted",
+      linewidth = 0.3
+    ),
+    axis.line = element_line(color = "black", linewidth = 0.7),
+    axis.ticks = element_line(color = "black"),
+    axis.text = element_text(face = "bold", size = 10),
+    plot.title = element_text(face = "bold", size = 16, hjust=0.5)
+  )
+```
+
+And we can save it:
+
+```{r}
+ggsave(
+  filename = file.path(output_dir, "densityplot.png"),
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+# ===============================================
+# STEP 10: BAR PLOT
+# ===============================================
+
+We can create a bar plot, which shows the number of genes classified as Upregulated, Downregulated or Unchanged based on their log2FC and p-value. It provides an overview of the gene expression changes observed in response to the treatment.
+
+First of all, it is necessary to classify the genes as "upregulated", "downregulated" or "unchanged", depending on their response to the treatment.To do this, we can use "results_differential_expression", which contains the p-value and Log2FC. 
+- We consider upregulated the genes with p-value<0.05 and Log2FC>0.
+- We consider downregulated the genes with p-value < 0.05 and Log2FC<0.
+
+```{r}
+#Classify the genes into: "Upregulated","Downregulated" and "Unchanged"
+results_differential_expression$Regulation <- ifelse(
+  is.na(results_differential_expression$P_VALUE) |
+    is.na(results_differential_expression$Log2FC),
+  "Not evaluated",
+  ifelse(
+    results_differential_expression$P_VALUE < 0.05 &
+      results_differential_expression$Log2FC > 0,
+    "Upregulated",
+    ifelse(
+      results_differential_expression$P_VALUE < 0.05 &
+        results_differential_expression$Log2FC < 0,
+      "Downregulated",
+      "Unchanged"
+    )
+  )
+)
+
+#Create a summary table with the count for each classification
+data_bar<-as.data.frame(table(results_differential_expression$Regulation)
+)
+
+colnames(data_bar) <- c("REGULATION", "COUNT")
+```
+
+Exclude genes that could not be evaluated
+
+```{r}
+data_bar_plot <- subset(data_bar, REGULATION != "Not evaluated")
+```
+
+And now we can create the bar plot:
+
+```{r}
+ggplot(data_bar_plot, aes(x = REGULATION, y = COUNT, fill = REGULATION)) +
+  geom_bar(stat = "identity", alpha = 0.7) +
+  scale_fill_manual(values = c(
+    "Upregulated" = "#D00000",
+    "Downregulated" = "#00A83B",
+    "Unchanged" = "#808080"
+  )) +
+  labs(
+    title = "Distribution of Gene Regulation",
+    x = "Regulation",
+    y = "Number of genes",
+    fill = "Regulation"
+  ) +
+  theme(
+    panel.background = element_blank(),
+    panel.grid.major = element_line(
+      color = "gray75",
+      linetype = "dotted",
+      linewidth = 0.5
+    ),
+    panel.grid.minor = element_line(
+      color = "gray88",
+      linetype = "dotted",
+      linewidth = 0.3
+    ),
+    axis.line = element_line(color = "black", linewidth = 0.7),
+    axis.ticks = element_line(color = "black"),
+    axis.text = element_text(face = "bold", size = 10),
+    legend.title = element_text(face = "bold", size = 11),
+    legend.text = element_text(face = "bold", size = 10),
+    plot.title = element_text(face = "bold", size = 16, hjust = 0.5)
+  )
+
+```
+
+And we can save it:
+
+```{r}
+ggsave(
+  filename = file.path(output_dir, "barplot.png"),
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+# ===============================================
+# STEP 11: HEATMAP
+# ===============================================
+
+We can create a heatmap too, which represents the expression levels of the 50 most variable genes across the six samples. The color gradient represents different expression levels, while the column annotations indicate the experimental group (Treated or Control). This visualization helps us identify similarities and differences in gene expression patterns between samples.
+
+First of all, we need to calculate the variance of all genes, in order to identify the 50 most variable genes.We store the expression values of the 50 selected in "mat_top".
+
+```{r}
+#Calculate the variance of each gene
+variance<-apply(log_matrix,1,var,na.rm=TRUE)
+
+#Select the 50 most variable genes
+top_n<-50
+
+top_50_genes<-names(sort(variance,decreasing=TRUE))[seq_len(top_n)]
+mat_top<-log_matrix[top_50_genes,]
+```
+
+The next step is to set the basic parameters for the heatmap, such as column names, colors and group annotations.
+
+```{r}
+#Group information
+grp<-factor(metadata$group)
+grp_lvls<-levels(grp)
+
+#Assign colors to group
+custom_colors<-c("#00A83B", "#D00000")
+grp_cols_map<-setNames(custom_colors, grp_lvls)
+
+# Create column annotation
+annotation_col <- data.frame(
+  Group = grp
+)
+
+rownames(annotation_col) <- metadata$sample
+
+# Define heatmap colors
+pal <- colorRampPalette(c("blue", "white", "red"))(101)
+
+```
+
+And now we can crete the heatmap:
+
+```{r}
+
+pheatmap(
+  mat_top,
+  scale = "row",
+  color = pal,
+  annotation_col = annotation_col,
+  annotation_colors = list(Group = grp_cols_map),
+  fontsize_row = 8,
+  main = "50 MOST VARIABLE GENES"
+)
+
+```
+
+# ===============================================
+# STEP 12: PCA
+# ===============================================
+
+We create a Principal Component Analysis (PCA) too.PCA plot allows us to visualize the similarities and differences between the six samples based on their gene expression profiles. Each point represents one sample, and the colors indicate the experimental groups (Treated and Control).
+
+To starts with, we do the principal component analysis:
+
+```{r}
+set.seed(1313)
+
+#transpose expression matrix
+mat_pca<-t(mat_top)
+
+#Prcomp
+pca<-prcomp(mat_pca,center=TRUE,scale.=TRUE)
+
+# Calculate the percentage of variance explained
+variance <- pca$sdev^2
+variance_percent <- variance / sum(variance) * 100
+```
+
+And then, we create the PCA plot:
+
+```{r}
+# Assign colors to samples
+pca_colors <- grp_cols_map[grp]
+
+#Create the PCA plot
+par(mar = c(5,5,4,12), xpd = TRUE)
+plot(pca$x[,1], pca$x[,2],
+    pch = 19, cex=1.5, col = pca_colors,
+     xlab = paste0("PC1 (", round(variance_percent[1], 2), "%)"),
+     ylab = paste0("PC2 (", round(variance_percent[2], 2), "%)"),
+     main = "Principal Component Analysis(PCA)")
+text(pca$x[,1], pca$x[,2], labels = rownames(pca$x),pos=3, offset=1, font=2, cex=0.9)
+abline(h=0,v=0,lty=2,col="gray70")
+legend("topright", inset = c(-0.5, 0), legend = names(grp_cols_map),
+       col = grp_cols_map, pch = 19, bty = "n", title = "Experimental Group",text.font=2,title.font=2)
+
+```
+
+# ===============================================
+# STEP 13: VOLCANO PLOT
+# ===============================================
+
+We can create volcano plot too. The volcano plot shows the relationship between the log2 fold change (Log2FC) and the statistical significance (-log10 p-value) of each gene. Each point represents one gene, and the colors indicate whether it is Upregulated, Downregulated or Unchanged. Genes classified as Not evaluated have been excluded from the plot. This visualization helps identify genes with the largest expression changes and the strongest statistical significance.
+
+The first step is calculate the negative log 10 of the p-value (original p-value)
+
+```{r}
+results_differential_expression$NEG_LOG10_PVALUE <- -log10(results_differential_expression$P_VALUE)
+```
+
+The next step is exclude genes that were not evaluated
+
+```{r}
+volcano_data <- subset(results_differential_expression, Regulation != "Not evaluated")
+```
+
+And now we can create the volcano plot:
+
+```{r}
+ggplot(volcano_data,
+       aes(x = Log2FC, y = NEG_LOG10_PVALUE, color = Regulation)) +
+  geom_point(alpha = 0.5) +
+  scale_color_manual(values = c(
+    "Upregulated" = "#D00000",
+    "Downregulated" = "#00A83B",
+    "Unchanged" = "#808080",
+    "Not evaluated" = "#000000"
+  )) +
+  labs(
+    title = "VOLCANO PLOT",
+    x = "Log2 Fold Change",
+    y = "-log10(P-value)",
+    color = "Regulation"
+  ) +
+  theme_minimal()+
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+```
+And we can save it:
+
+```{r}
+ggsave(
+  filename = file.path(output_dir, "volcano.png"),
+  width = 10,
+  height = 6,
+  dpi = 300
+)
+```
+
+```{r}
+cat("Analysis completed successfully!\n")
+```
+
