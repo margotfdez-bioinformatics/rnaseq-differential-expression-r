@@ -4,6 +4,8 @@ Command-line R pipeline for exploratory data analysis and differential gene expr
 
 Command-line R pipeline developed by **Margot María Fernández Cuadros** for exploratory data analysis (EDA) and gene-by-gene differential expression testing on RNA-seq count matrices (GEO dataset: **GSE294583**).
 
+> **Project Scope & Disclaimer:** This project was developed as an end-to-end R programming and software design exercise. Rather than relying on specialized Bioconductor RNA-seq packages (such as `DESeq2`, `edgeR`, or `limma`), the workflow implements data parsing, statistical testing, and visualization from scratch using base R and general-purpose libraries to prioritize algorithmic transparency, CLI argument handling, and reproducible reporting over standard clinical/production RNA-seq modeling.
+
 ##  Key Features
 * **Command-Line Interface (CLI):** Dynamically parses input file paths, output directories, and an optional statistical significance threshold (`--pvalue`) via `commandArgs()`.
 * **Data Preprocessing:** Applies a $\log_2(\text{counts} + 1)$ transformation to stabilize variance across samples.
